@@ -23,11 +23,23 @@ jQuery( function ( $ ) {
 	var cfg = window.bvVarMap;
 
 	// Bail quietly rather than throwing when a dependency or the container is
-	// absent. `window.map` doubles as the already-initialised guard, which is
-	// what the original `if (!map)` wrapper relied on via var hoisting.
-	if ( ! cfg || window.map ) {
+	// absent.
+	//
+	// The guard must NOT test window.map. Browsers expose every element with an
+	// id as a property of window ("named access on the Window object"), so
+	// <div id="map"> makes window.map a truthy HTMLDivElement before any script
+	// runs. The original survived this by declaring `var map` at global scope,
+	// which shadows the named-element global with undefined; once that moved
+	// inside this closure, testing window.map bailed on every page load.
+	if ( ! cfg || window.bvMapInitialised ) {
 		return;
 	}
+
+	window.bvMapInitialised = true;
+
+	// Assigned once the Map exists. Kept local so helpers below test the real
+	// instance rather than the <div id="map"> that window.map resolves to.
+	var map = null;
 
 	if ( typeof mapboxgl === 'undefined' || typeof turf === 'undefined' ) {
 		return;
@@ -73,14 +85,14 @@ jQuery( function ( $ ) {
 		if ( width > height ) {
 			$( 'body' ).addClass( 'wide' );
 
-			if ( window.map ) {
+			if ( map ) {
 				$( '.mapboxgl-canvas' ).attr( 'height', height );
 				$( '.mapboxgl-canvas' ).attr( 'width', width * MAP_WIDTH_WIDESCREEN );
 			}
 		} else {
 			$( 'body' ).removeClass( 'wide' );
 
-			if ( window.map ) {
+			if ( map ) {
 				$( '.mapboxgl-canvas' ).attr( 'height', height * MAP_HEIGHT_NONWIDESCREEN );
 				$( '.mapboxgl-canvas' ).attr( 'width', width );
 			}
@@ -143,7 +155,11 @@ jQuery( function ( $ ) {
 		mapOptions.bounds = turf.bbox( turf.multiPoint( firstLocations ) );
 	}
 
-	var map = new mapboxgl.Map( mapOptions );
+	map = new mapboxgl.Map( mapOptions );
+
+	// Exported for the theme: digital-nomad-child/assets/js/list-stories.js
+	// calls map.fitBounds() and map.flyTo(). This assignment deliberately
+	// overwrites the named-element global described above.
 	window.map = map;
 
 	/* ---------------------------------------------------------------------
@@ -518,6 +534,19 @@ jQuery( function ( $ ) {
 		} );
 
 		map.addSource( 'trace', { type: 'geojson', data: routeData } );
+
+		// Renders nothing on purpose — a symbol layer with no text-field or
+		// icon-image draws no glyphs. It is still load-bearing: Mapbox GL only
+		// fetches and renders tiles for sources referenced by at least one
+		// layer, and updateMarkers() builds every marker from
+		// map.querySourceFeatures( 'stories' ), which reads rendered tiles.
+		// Remove this layer and querySourceFeatures returns an empty array, so
+		// no markers are ever created.
+		map.addLayer( {
+			id: 'cluster-count',
+			type: 'symbol',
+			source: 'stories',
+		} );
 
 		map.addLayer( {
 			id: 'trace',
