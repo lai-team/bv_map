@@ -100,6 +100,10 @@ docs/NOTES.md              Development notes on the incremental loading strategy
 - `assets/js/temp.js` and `assets/js/elementor-class.js` are scratch files and
   are not enqueued.
 
+## License
+
+GPL-2.0-or-later. See [LICENSE](LICENSE).
+
 ## Credits
 
 Originally authored by Gentrit Biba; maintained by the Lai Consulting Team.

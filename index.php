@@ -7,6 +7,8 @@
  * Author URI: https://github.com/gentritbiba
  * GitLab Plugin URI: https://gitlab.com/beauvoyage/bv_map
  * Version: 0.1
+ * License: GPL-2.0-or-later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  */
 
 define('MAPBOX_VER','v2.4.0');
