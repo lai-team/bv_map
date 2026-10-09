@@ -1,787 +1,866 @@
-if (!map) {
-  var _ref;
+/**
+ * BV Map — journey map frontend.
+ *
+ * This file was previously committed Babel output with hand-edits layered on
+ * top; no build config exists, so it is now plain source. Mapbox GL v2 already
+ * requires an ES6-capable browser, so there is nothing to transpile for.
+ *
+ * Two globals are exported deliberately:
+ *   window.map               the mapboxgl.Map instance
+ *   window.bvVarMapGeoJson   the live FeatureCollection
+ * The active theme's assets/js/list-stories.js reads both (it calls
+ * map.fitBounds()/map.flyTo() and searches bvVarMapGeoJson.features). Do not
+ * scope them away without updating the theme.
+ */
 
-  function checkWindowDimensions() {
-    let width = window.innerWidth;
-    let height = window.innerHeight;
-    let map_width_widescreen = 0.45;
-    let map_height_nonwidescreen = 0.4;
+( function ( $ ) {
+	'use strict';
 
-    if (width > height) {
-      $('body').addClass('wide');
+	var cfg = window.bvVarMap;
 
-      if (map) {
-        $('.mapboxgl-canvas').attr('height', height);
-        $('.mapboxgl-canvas').attr('width', width * map_width_widescreen);
-      }
-    } else {
-      $('body').removeClass('wide');
-
-      if (map) {
-        $('.mapboxgl-canvas').attr('height', height * map_height_nonwidescreen);
-        $('.mapboxgl-canvas').attr('width', width);
-      }
-    }
-  }
-
-  checkWindowDimensions();
-  var shouldListenResize = true;
-
-  window.onresize = function () {
-    if (shouldListenResize) {
-      checkWindowDimensions();
-      shouldListenResize = false;
-      setTimeout(function () {
-        shouldListenResize = true;
-      }, 100); //console.log(123);
-    }
-  };
-
-  mapboxgl.accessToken = bvVarMap.mapbox_api_key;
-  var bvVarMapGeoJson = {
-    "type": "FeatureCollection",
-    "crs": {
-      "type": "name",
-      "properties": {
-        "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
-      }
-    },
-    "features": []
-  };
-  var routeData = {
-    "type": "FeatureCollection",
-    "features": [{
-      type: "Feature",
-      geometry: {
-        type: 'LineString',
-        coordinates: []
-      }
-    }]
-  }; //console.log(routeData.features[0].geometry.coordinates);
-
-  var shouldLoadThumbnails = true;
-  var boxToLoad;
-  var center = (_ref = [bvVarMap.user_location.longitude, bvVarMap.user_location.latitude]) !== null && _ref !== void 0 ? _ref : [1, -1]; //console.log(bvVarMap.user_location.longitude, 'start');
-	//console.log('Ge0jsoN',bvVarMapGeoJson);
-
-  var map = new mapboxgl.Map({
-    container: "map",
-    // container id
-    style: bvVarMap.mapStyle,
-    // stylesheet location
-    //center: [bvVarMap.user_location.longitude, bvVarMap.user_location.latitude], // s
-    center: center,
-    // s
-    minZoom: parseFloat(bvVarMap.minZoom),
-    maxZoom: parseFloat(bvVarMap.maxZoom),
-    //zoom: 4,
-    bounds: turf.bbox(turf.multiPoint(bvVarMap.first_locations)),
-    fitBoundsOptions: {
-	padding: Math.round(Math.min( window.innerHeight, window.innerWidth) /5 ) ,  
-      	duration: 2000
-    }
-  }); 
-	//console.log('quiried 0bj',bvVarMap.queried_obj);
-
-  map.on('style.load', function () {
-    // Later on, we'll add layers to differentiate our marker clusters
-    // by the number of markers they represent. We'll store the breaks
-    // between each category here so we can change them easily. 
-    let highCount = 75,
-        lowCount = 15;
-    let markers = {};
-    let markersOnScreen = {};
-    let nonClustermarkersOnScreen = {}; // Add a new source from our GeoJSON data and set the 
-    // 'cluster' option to true. 
-	
-	var scale = new mapboxgl.ScaleControl({
-	    maxWidth: 120,
-	    unit: 'imperial'
-	});
-	map.addControl(scale);
-
-	scale.setUnit('metric');
-
-    map.addSource("stories", {
-      type: "geojson",
-      data: bvVarMapGeoJson,
-      cluster: true,
-      clusterMaxZoom: 10,
-      // Max zoom to cluster points on
-      clusterRadius: 50,
-      // Radius of each cluster when clustering points (defaults to 400)
-      clusterProperties: {
-        // get the highest id  of the clustered points
-        "id": ["max", ["get", "id"], '']
-      }
-    }); // Source that is used for drawing the connections betweeen points
-
-    map.addSource('trace', {
-      type: 'geojson',
-      data: routeData
-    }); // Layer that draws the connections between points
-
-    map.addLayer({
-      'id': 'trace',
-      'type': 'line',
-      'source': 'trace',
-      'paint': {
-        'line-color': ['get', 'color'],
-        'line-opacity': 0.8,
-        'line-width': 7,
-        'line-blur': 1 //'line-gap-width': 10,
-
-      },
-      'layout': {
-        'line-join': 'round',
-        'line-cap': 'round' //'line-round-limit':0.1,
-
-      }
-    });
-
-    function reduceUnionJourneys(prev, current, index) {
-      var _prev$properties$jour, _current$properties$j;
-
-      let prevValue = prev.length > 0 ? prev : (_prev$properties$jour = prev.properties.journeys) !== null && _prev$properties$jour !== void 0 ? _prev$properties$jour : array();
-      let joinArrays = [...prevValue, ...((_current$properties$j = current.properties.journeys) !== null && _current$properties$j !== void 0 ? _current$properties$j : array())];
-      return [...new Set(joinArrays)];
-    }
-
-    let createBezierCurve = (p1, p2, p3, p4, precision) => {
-	if (p1 === null) return;
-	if (p2 === null) return;
-	if (p3 === null) return;
-	if (p4 === null) return;
-      // console.log({p1,p2,p3,p4})
-      // p1 is the starting point p4 is the end point
-      // p2 and p3 are control points
-      // precision is the number of segments that will be used for the cruve
-      let points = []; // if(precision<=0)return;
-
-      for (let t = 0; t <= 1; t += 1 / precision) {
-        let point_at_t_x = Math.pow(1 - t, 3) * p1[0] + 3 * Math.pow(1 - t, 2) * t * p2[0] + 3 * (1 - t) * Math.pow(t, 2) * p3[0] + Math.pow(t, 3) * p4[0];
-        let point_at_t_y = Math.pow(1 - t, 3) * p1[1] + 3 * Math.pow(1 - t, 2) * t * p2[1] + 3 * (1 - t) * Math.pow(t, 2) * p3[1] + Math.pow(t, 3) * p4[1];
-        points.push([point_at_t_x, point_at_t_y]);
-      }
-
-      return points;
-    };
-
-    let ctrlPtBezier = (explodedGLine2, back = true, factor = 2.4) => {
-      let p1 = explodedGLine2[2];
-      let p2 = explodedGLine2[1];
-      let p3 = explodedGLine2[0];
-      if (turf.booleanEqual(p2, p1) || turf.booleanEqual(p2, p3)) return p2.geometry.coordinates;
-      let bearing_s = turf.bearing(p1.geometry.coordinates, p2.geometry.coordinates);
-      let bearing_t = turf.bearing(p2.geometry.coordinates, p3.geometry.coordinates);
-      let dBearing = bearing_t - bearing_s;
-      dBearing = dBearing > 180 ? dBearing - 360 : dBearing;
-      dBearing = dBearing < -180 ? dBearing + 360 : dBearing;
-      let len_s = turf.distance(p2, p1, {
-        units: 'degrees'
-      });
-      let len_t = turf.distance(p2, p3, {
-        units: 'degrees'
-      });
-      let bearing_m = bearing_s + dBearing * len_s / (len_s + len_t);
-
-      if (back) {
-        const result = turf.destination(p2.geometry.coordinates, -len_s / factor, bearing_m, {
-          units: 'degrees'
-        });
-        return result.geometry.coordinates;
-      } else {
-        const result = turf.destination(p2.geometry.coordinates, len_t / factor, bearing_m, {
-          units: 'degrees'
-        });
-        return result.geometry.coordinates;
-      }
-    };
-
-    if (bvVarMap.waypoints) {
-      //console.log(bvVarMap.waypoints, ' waypoints');
-      let waypointsData = {
-        'type': 'FeatureCollection',
-        'features': bvVarMap.waypoints.filter(x => x.properties.posttype == 'tribe_events')
-      };
-      let itineraries = [...new Set(waypointsData.features.map(x => {
-        var _x$properties$journey;
-
-        return (_x$properties$journey = x.properties.journeys[0]) !== null && _x$properties$journey !== void 0 ? _x$properties$journey : null;
-      }))].filter(function (el) {
-        return el != null;
-      }).reverse(); //console.log(itineraries,'itins');
-
-      /*
-          let itineraries = turf.featureReduce(waypointsData, (prev, current, ind) =>{ 
-          let prevValue = prev.length > 0 ? prev : prev.properties.journeys;
-              let joinArrays = [...prevValue, ...current.properties.journeys[0]??[]];
-                  return [...new Set(joinArrays)];
-          });
-      */
-      //console.log(itineraries, 'itins');
-
-      let itinData = {
-        "type": "FeatureCollection",
-        "features": [{
-          type: "Feature",
-          geometry: {
-            type: 'LineString',
-            coordinates: []
-          }
-        }]
-      };
-
-      function extendWaypoints(journey, jFeatures) {
-        //jFeatures.sort(function(a,b){ return a.properties.datetime_start - b.properties.datetime_start ;});
-        //console.log(journey, 'getting journey');
-        var waypoints = jFeatures.filter(y => y.properties.journeys[0] == journey);
-        if (!waypoints.length) return;
-        //console.log(waypoints, 'subjourney');
-        //console.log(jFeatures, 'full journey'); 
-	//console.log(waypoints,'collected waypoints');
-
-        let wBefore;
-        let wAfter;
-        let pBefore = waypoints[0].properties.journeys.concat();
-        let pAfter = waypoints[0].properties.journeys.concat();
-        //console.log(pBefore, 'starting checking');
-
-        do {
-          pBefore.shift();
-          wBefore = jFeatures.filter(y => {
-            var _y$properties$datetim;
-
-            return y.properties.journeys[0] == pBefore[0] && ((_y$properties$datetim = y.properties.datetime_end) !== null && _y$properties$datetim !== void 0 ? _y$properties$datetim : y.properties.datetime) < waypoints[waypoints.length - 1].properties.datetime_start;
-          })[0];
-          //console.log(wBefore, 'wBefore in Loop');
-          //console.log(pBefore, 'pBefore Looping');
-        } while (wBefore === undefined && pBefore.length);
-
-        //console.log(wBefore, 'before'); //console.log(pAfter,'any loop?');
-        //console.log(pAfter,'starting checkingi again');
-
-        do {
-          pAfter.shift();
-          wAfter = [...jFeatures.filter(y => y.properties.journeys[0] == pAfter[0] && y.properties.datetime_start > waypoints[0].properties.datetime_end)].pop();
-          //console.log(wAfter, 'wAfter in Loop');
-          //console.log(pAfter, 'pAfter Looping');
-        } while (wAfter === undefined && pAfter.length);
-
-        //console.log(wAfter, 'after');
-        if (wBefore) waypoints.push(wBefore);
-        if (wAfter) waypoints.unshift(wAfter);
-        return waypoints;
-      } //itinData.features = itineraries.map(x => buildJourneyBezier(x, bvVarMap.waypoints.filter(y => y.properties.journeys[0]==x), false)).filter(function (el) {
-
-
-      itinData.features = itineraries.map(x => buildJourneyBezier(x, extendWaypoints(x, bvVarMap.waypoints), false)).filter(function (el) {
-        return el != null;
-      }); //console.log(itinData.features,'itinData');
-
-      for (let i = 0; i < itinData.features.length; i++) {
-        //routeData.features[i].properties.color = colors[i%routeData.features.length];
-        itinData.features[i].properties.color = RGBToHex(...randomRGB(itinData.features[i].properties.journey + 7 * i));
-      } //console.log(itinData.features,'bez');
-      //console.log(buildJourneyBezier(4,bvVarMap.waypoints,false));
-      // Source that is used for drawing the connections betweeen points
-
-
-      map.addSource('itinerary', {
-        type: 'geojson',
-        data: itinData
-      }); // Layer that draws the connections between points
-
-      map.addLayer({
-        'id': 'itinerary',
-        'type': 'line',
-        'source': 'itinerary',
-        'paint': {
-          'line-color': ['get', 'color'],
-          'line-opacity': 0.9,
-          'line-width': 3,
-          //'line-dasharray': ['get','dasharray'],
-          'line-dasharray': [2, 1.5],
-          'line-blur': 0 //'line-gap-width': 10,
-
-        },
-        'layout': {
-          'line-join': 'miter',
-          'line-cap': 'butt' //'line-round-limit':0.1,
-
-        }
-      }); //var wcoord = bvVarMap.waypoints.map(x=>x.geometry.coordinates);
-      //console.log(wcoord,'filtered');
-      // Add a GeoJSON source containing place coordinates and information.
-
-      map.addSource('waypooints', {
-        'type': 'geojson',
-        'data': waypointsData
-      });
-      map.addLayer({
-        'id': 'waypoint-circles',
-        'type': 'circle',
-        'source': 'waypooints',
-        'paint': {
-          'circle-radius': 6,
-          'circle-color': '#bbb'
-        },
-        'filter': ['==', '$type', 'Point']
-      });
-      map.addLayer({
-        'id': 'poi-labels',
-        'type': 'symbol',
-        'source': 'waypooints',
-        'layout': {
-          "icon-image": "harbor_icon",
-          "text-field": ["format", 
-		  ["get", "date"], {
-            				"font-scale": 1,
-            				'text-color': '#fff'
-          			}, // Use default formatting
-          	"\n", {}, 
-		  ["get", "title"],
-		  		{
-            				//"text-font": ["Niconne", ["DIN Offc Pro Italic"]],
-            				"text-font": ["literal", ["DIN Offc Pro Italic"]],
-            				"font-scale": .8,
-            				'text-color': '#fff'
-          			},
-		"\n",{},
-		  ["get","datetime_delta"],
-		  		{
-            				"text-font": ["literal", ["DIN Offc Pro Italic"]],
-            				"font-scale": .8,
-            				'text-color': '#fff'
-          			}			
-	  	]
-        },
-        "paint": {
-          "text-color": "#fff",
-          "text-halo-color": "#333",
-          "text-halo-width": 1.2,
-          "text-halo-blur": 0
-        }
-      });
-
-	    /*
-	map.addSource('bBox',{
-		'type':'geojson',
-		'data':boxToLoad
-	});
-	map.addLayer({
-		'id':'bBox',
-'type': 'fill',
-'source': 'bBox', // reference the data source
-'layout': {},
-'paint': {
-'fill-color': '#0080ff', // blue color fill
-'fill-opacity': 0.5
-}
-	});
-	*/
-
-      function createWaypoint(feature) {
-        //console.log('feature '+feature);
-        let html = '<div class="map-waypoint-wrapper">';
-        html += '<span class="datetime">';
-        html += feature.properties.datetime;
-        html += '</span>';
-        html += '<span class="">';
-        html += feature.properties.datetime;
-        html += '</span>';
-        html += '</div>'; // If there is a cluster this will display the number of images clustered
-
-        if (feature.properties.point_count) {
-          html += "<span class='point_count'>" + feature.properties.point_count + "</span>";
-        }
-
-        let el = document.createElement("div");
-        el.innerHTML = html;
-        el.className = "marker"; // Event handler which scrolls to the story post which holds the image we click
-
-        el.onclick = () => {
-          console.log('click id ' + feature.id); 
-		//console.log(props.id);
-          //$("[data-id=" + props.id + "]")[0].scrollIntoView({
-
-          $("#post_" + feature.id)[0].scrollIntoView({
-            behavior: "smooth",
-            // or "auto" or "instant"
-            block: "center" // or "end"
-
-          });
-          $("#post_" + feature.id).parents('.stories-wrapper').removeClass('hide');
-        };
-
-        return el;
-      }
-
-      waypointsData.features.forEach(function(marker) {
-        //console.log({marker})
-        // create a HTML element for each feature
-        var el = document.createElement('div');
-        el.className = 'marker';
-        $(el).click(function(){
-          $("#post_" + marker.id)[0].scrollIntoView({
-            behavior: "smooth",
-            // or "auto" or "instant"
-            block: "center" // or "end"
-  
-          });
-        })
-      
-        // make a marker for each feature and add to the map
-        new mapboxgl.Marker(el)
-          .setLngLat(marker.geometry.coordinates)
-          .addTo(map);
-      });
-
-
-    } // Function that adds thumbnails on top of the map as HTML objects
-
-
-    function createThumbnail(feature) {
-      //console.log('feature '+feature);
-      let html = '<div class="cluster-img-wrapper">';
-		const src = getImageById(feature.properties.id);
-		let extraClasses = "";
-		if(src.includes('225x300')) extraClasses += " vertical"
-      html += '<img src="' + src + '" style="position:relative;width:100%;height:100%" class="img-on-map'+extraClasses+'">';
-      html += '</div>'; // If there is a cluster this will display the number of images clustered
-
-      if (feature.properties.point_count) {
-        html += "<span class='point_count'>" + feature.properties.point_count + "</span>";
-      }
-
-      let el = document.createElement("div");
-      el.innerHTML = html;
-      el.className = "marker"; // Event handler which scrolls to the story post which holds the image we click
-
-      el.onclick = () => {
-	if(  $("#post_" + feature.id)[0] == null){
-		//console.log('does not exist');
-		$.ajax({
-                        url: pv.template_path + '/inc/ajax.php',
-                        type: "POST",
-                        data: {
-                            'data'  : feature.id,
-                            'action':'jumpto_post',
-                            'journey_id' : $('#journey_id').val()??"",
-                        },
-                        success: function(data){
-                            data = JSON.parse(data);
-				load_more_top = true;
-				load_more_bottom = true;
-			  let storyList = '<div class="story-list">';
-				storyList += data.html;
-				storyList += '</div>';
-                            $('#content .story-list').replaceWith( storyList);
-                                //postCoords=data.coords.concat(postCoords);
-				   initCoords=data.coords;
-				//console.log(initCoords,'coorDs');
-				      //console.log($("#post_" +feature.id),'poSt');
-				 $("#post_" + feature.id)[0].scrollIntoView({
-			          behavior: "smooth",
-			          // or "auto" or "instant"
-			          block: "center" // or "end"
-			
-			        });
-			        $("#post_" + feature.id).parent().removeClass('hide');
-                        },
-                        error: function (jqXHR, textStatus, errorThrown) {
-                            shouldLoad = true
-                            //console.log(errorThrown);
-                        }
-                    })
-	}else{
-	      //console.log($("#post_" +feature.id),'posT');
-        //console.log('click id ' + feature.id); //console.log(props.id);
-        //$("[data-id=" + props.id + "]")[0].scrollIntoView({
-
-        $("#post_" + feature.id)[0].scrollIntoView({
-          behavior: "smooth",
-          // or "auto" or "instant"
-          block: "center" // or "end"
-
-        });
-        $("#post_" + feature.id).parent().removeClass('hide');
+	// Bail quietly rather than throwing when a dependency or the container is
+	// absent. `window.map` doubles as the already-initialised guard, which is
+	// what the original `if (!map)` wrapper relied on via var hoisting.
+	if ( ! cfg || window.map ) {
+		return;
 	}
 
-      };
+	if ( typeof mapboxgl === 'undefined' || typeof turf === 'undefined' ) {
+		return;
+	}
 
-      return el;
-    } // Get the thumbnail from the bvVarMapGeoJson.features for a given ID
+	if ( ! document.getElementById( 'map' ) ) {
+		return;
+	}
 
+	var MAP_WIDTH_WIDESCREEN = 0.45;
+	var MAP_HEIGHT_NONWIDESCREEN = 0.4;
+	var RESIZE_THROTTLE_MS = 100;
 
-    function getImageById(id) {
-      //console.log('collection: '+bvVarMapGeoJson);
-      //console.log('image id ' + id);
-      if (!id) return;
-      if (!bvVarMapGeoJson.features.length > 0) return;
-      let feature = bvVarMapGeoJson.features.find(({
-        properties
-      }) => properties.id == id); //console.log('fEature: ' + feature.id);
+	var bvVarMapGeoJson = {
+		type: 'FeatureCollection',
+		crs: {
+			type: 'name',
+			properties: { name: 'urn:ogc:def:crs:OGC:1.3:CRS84' }
+		},
+		features: []
+	};
+	window.bvVarMapGeoJson = bvVarMapGeoJson;
 
-      return feature ? feature.properties.thumbnail : null;
-    } // Updates the markers on the map 
-    // Shows only what is inside the map bounding box
+	var routeData = {
+		type: 'FeatureCollection',
+		features: [ {
+			type: 'Feature',
+			geometry: { type: 'LineString', coordinates: [] }
+		} ]
+	};
 
+	var shouldLoadThumbnails = true;
+	var boxToLoad = null;
 
-    function buildJourneyBezier(journey, jfeatures, gline2 = true) {
-      //function buildJourneyBezier(journey, gjFeatures, gline2 = true) {
-      //if (!bvVarMapGeoJson.features) return;
-      //if (!bvVarMapGeoJson.features.length > 0) return;
-      //console.log(bvVarMapGeoJson.features);
-      //let jfeatures = bvVarMapGeoJson.features.filter(x => x.properties.journeys.includes(journey));
-      //let jfeatures = gjFeatures.filter(x => x.properties.journeys.includes(journey));
-      if (jfeatures.length < 2) return; // console.log(jfeatures);
+	/* ---------------------------------------------------------------------
+	 * Viewport
+	 * ------------------------------------------------------------------ */
 
-      let ptsBezier = []; //if(wcoord !== undefined){
-      //ptsBezier.push(...wcoord);
-      //	}
+	function checkWindowDimensions() {
+		var width = window.innerWidth;
+		var height = window.innerHeight;
 
-      for (let i = 1; i < jfeatures.length; i++) {
-		//console.log(i,'i');
-        if (gline2) {
-          var _turf$explode$feature, _turf$explode$feature2;
-		_turf$explode$feature = jfeatures[i - 1].properties['geom_line2__' + journey];
-	        _turf$explode$feature = _turf$explode$feature ? turf.explode( _turf$explode$feature ).features : [ jfeatures[i], jfeatures[i - 1], jfeatures[Math.max(i - 2, 0)] ] ;
-	        _turf$explode$feature2 = jfeatures[i].properties['geom_line2__' + journey];
-	        _turf$explode$feature2 = _turf$explode$feature2 ? turf.explode( _turf$explode$feature2 ).features : [jfeatures[Math.min(i + 1, jfeatures.length - 1)], jfeatures[i], jfeatures[i - 1]];
+		if ( width > height ) {
+			$( 'body' ).addClass( 'wide' );
 
-          ptsBezier.push(...createBezierCurve(
-                  jfeatures[i - 1].geometry.coordinates,
-                  ctrlPtBezier( _turf$explode$feature , false),
-                  ctrlPtBezier( _turf$explode$feature2 , true),
-                  jfeatures[i].geometry.coordinates,
-                  20));
-		/*
-          ptsBezier.push(...createBezierCurve(
-		  jfeatures[i - 1].geometry.coordinates, 
-		  ctrlPtBezier(
-			  (_turf$explode$feature = turf.explode(jfeatures[i - 1].properties['geom_line2__' + journey]).features) !== null && _turf$explode$feature !== void 0 ? 
-			  _turf$explode$feature : 
-			  [jfeatures[i], jfeatures[i - 1], jfeatures[Math.max(i - 2, 0)]],
-			  false), 
-		  ctrlPtBezier(
-			  (_turf$explode$feature2 = turf.explode(jfeatures[i].properties['geom_line2__' + journey]).features) !== null && _turf$explode$feature2 !== void 0 ? 
-			  _turf$explode$feature2 : 
-			  [jfeatures[Math.min(i + 1, jfeatures.length - 1)], jfeatures[i], jfeatures[i - 1]],
-			  true), 
-		  jfeatures[i].geometry.coordinates, 
-		  100));
-		  */
-		//console.log(_turf$explode$feature,'feature 1');
-		//console.log(_turf$explode$feature2,'feature 2');
-        } else {
-          //console.log(i);
-          ptsBezier.push(...createBezierCurve(
-		  jfeatures[i - 1].geometry.coordinates, 
-		  ctrlPtBezier([jfeatures[i], jfeatures[i - 1], jfeatures[Math.max(i - 2, 0)]], false),
-		  ctrlPtBezier([//jfeatures[ Math.min(i+1,jfeatures.length-1)],
-          i + 1 < jfeatures.length ? jfeatures[i + 1] : jfeatures[i].properties['geom_line2__' + journey] ? 
-			  turf.explode(jfeatures[i].properties['geom_line2__' + journey]).features[0] : 
-			  jfeatures[jfeatures.length - 1], jfeatures[i], jfeatures[i - 1]], 
-			  true),
-		  jfeatures[i].geometry.coordinates,
-		  10));
-        }
-      }
+			if ( window.map ) {
+				$( '.mapboxgl-canvas' ).attr( 'height', height );
+				$( '.mapboxgl-canvas' ).attr( 'width', width * MAP_WIDTH_WIDESCREEN );
+			}
+		} else {
+			$( 'body' ).removeClass( 'wide' );
 
-      let journeyPath = turf.lineString(ptsBezier); 
-	   //console.log(journeyPath,'bPath');
+			if ( window.map ) {
+				$( '.mapboxgl-canvas' ).attr( 'height', height * MAP_HEIGHT_NONWIDESCREEN );
+				$( '.mapboxgl-canvas' ).attr( 'width', width );
+			}
+		}
+	}
 
-      journeyPath.properties['journey'] = journey;
-      return journeyPath;
-    } 
-	  //console.log("its Working");
+	checkWindowDimensions();
 
+	var shouldListenResize = true;
+	window.addEventListener( 'resize', function () {
+		if ( ! shouldListenResize ) {
+			return;
+		}
 
-    function RGBToHex(r, g, b) {
-      r = r.toString(16);
-      g = g.toString(16);
-      b = b.toString(16);
-      if (r.length == 1) r = "0" + r;
-      if (g.length == 1) g = "0" + g;
-      if (b.length == 1) b = "0" + b;
-      return "#" + r + g + b;
-    }
+		checkWindowDimensions();
+		shouldListenResize = false;
+		window.setTimeout( function () {
+			shouldListenResize = true;
+		}, RESIZE_THROTTLE_MS );
+	} );
 
-    function randomRGB(i, startAt = 11) {
-      const defaultColors = [[31, 119, 180], [255, 127, 14], [44, 160, 44], [214, 39, 40], [148, 103, 189], [140, 86, 75], [227, 119, 194], [127, 127, 127], [188, 189, 34], [23, 190, 207]].reverse();
-      let selectColor = defaultColors[i % defaultColors.length];
+	/* ---------------------------------------------------------------------
+	 * Map construction
+	 * ------------------------------------------------------------------ */
 
-      if (i < startAt) {
-        return selectColor;
-      } else {
-        let pertR = Math.floor(Math.random() * -21);
-        let pertB = Math.floor(Math.random() * 20);
-        let pertG = pertB + pertR;
-        let result = [selectColor[0] + pertR, selectColor[1] + pertG, selectColor[2] + pertB]; // console.log(result);
+	mapboxgl.accessToken = cfg.mapbox_api_key;
 
-        return result;
-      }
-    }
+	// bv_userlocation() can return null; the transpiled `?? [1,-1]` fallback sat
+	// on an array literal, which is never nullish, so it could never fire.
+	var userLocation = cfg.user_location || {};
+	var center = [
+		isFinite( userLocation.longitude ) ? Number( userLocation.longitude ) : 1,
+		isFinite( userLocation.latitude ) ? Number( userLocation.latitude ) : -1
+	];
 
-    function updateMarkers() {
-      let newMarkers = {};
-      cluster = false; // Get the images and clusters from the source 'stories"
+	function isCoordinatePair( value ) {
+		return Array.isArray( value ) && value.length >= 2 &&
+			isFinite( value[ 0 ] ) && isFinite( value[ 1 ] );
+	}
 
-      let features = map.querySourceFeatures('stories');
+	var mapOptions = {
+		container: 'map',
+		style: cfg.mapStyle,
+		center: center,
+		minZoom: parseFloat( cfg.minZoom ),
+		maxZoom: parseFloat( cfg.maxZoom ),
+		fitBoundsOptions: {
+			padding: Math.round( Math.min( window.innerHeight, window.innerWidth ) / 5 ),
+			duration: 2000
+		}
+	};
 
-      for (id in markersOnScreen) {
-        cluster = true;
-        break;
-      } // original Bezier
+	// turf.multiPoint() throws on an empty array, and first_locations is empty
+	// whenever the query found no geotagged posts.
+	var firstLocations = Array.isArray( cfg.first_locations )
+		? cfg.first_locations.filter( isCoordinatePair )
+		: [];
 
+	if ( firstLocations.length ) {
+		mapOptions.bounds = turf.bbox( turf.multiPoint( firstLocations ) );
+	}
 
-      if (bvVarMapGeoJson.features && bvVarMapGeoJson.features.length > 0) {
-        //console.log(bvVarMapGeoJson.features,'features');
-        //console.log(bvVarMapGeoJson,'bvVarMapGeoJson');
-        let journeys = turf.featureReduce(bvVarMapGeoJson, (prev, current, index) => reduceUnionJourneys(prev, current, index)); 
-	     //console.log(journeys,'journeys');
+	var map = new mapboxgl.Map( mapOptions );
+	window.map = map;
 
-        routeData.features = journeys.map(x => buildJourneyBezier(x, bvVarMapGeoJson.features.filter(y => y.properties.journeys.includes(x)), true)).filter(function (el) {
-          return el != null;
-        });
-	      //console.log(routeData.features,'route');
+	/* ---------------------------------------------------------------------
+	 * Geometry helpers
+	 * ------------------------------------------------------------------ */
 
-        colors = ['#1f77b4', // muted blue
-        '#ff7f0e', // safety orange
-        '#2ca02c', // cooked asparagus green
-        '#d62728', // brick red
-        '#9467bd', // muted purple
-        '#8c564b', // chestnut brown
-        '#e377c2', // raspberry yogurt pink
-        '#7f7f7f', // middle gray
-        '#bcbd22', // curry yellow-green
-        '#17becf' // blue-teal
-        ];
+	/**
+	 * Every distinct journey id present in a set of features.
+	 *
+	 * Replaces a turf.featureReduce() call that had two defects: it used the PHP
+	 * function array() as a fallback, and with no seed value it returned the
+	 * feature itself rather than an array when exactly one feature was present.
+	 *
+	 * @param {Array} features GeoJSON features.
+	 * @return {Array} Journey identifiers.
+	 */
+	function collectJourneys( features ) {
+		var seen = [];
 
-        for (let i = 0; i < routeData.features.length; i++) {
-          //routeData.features[i].properties.color = colors[i%routeData.features.length];
-          routeData.features[i].properties.color = RGBToHex(...randomRGB(routeData.features[i].properties.journey + 7 * i));
-        }
+		( features || [] ).forEach( function ( feature ) {
+			var journeys = ( feature && feature.properties && feature.properties.journeys ) || [];
 
-        map.getSource('trace').setData(routeData);
-      }
+			journeys.forEach( function ( journey ) {
+				if ( seen.indexOf( journey ) === -1 ) {
+					seen.push( journey );
+				}
+			} );
+		} );
 
-      if (!features) {
-        return;
-      }
+		return seen;
+	}
 
-      ; // for every cluster on the screen, create an HTML marker for it (if we didn't yet),
-      // and add it to the map if it's not there already
+	/**
+	 * Sample a cubic bezier.
+	 *
+	 * @param {Array}  p1        Start point.
+	 * @param {Array}  p2        First control point.
+	 * @param {Array}  p3        Second control point.
+	 * @param {Array}  p4        End point.
+	 * @param {number} precision Segment count.
+	 * @return {Array|null} Positions along the curve.
+	 */
+	function createBezierCurve( p1, p2, p3, p4, precision ) {
+		if ( ! p1 || ! p2 || ! p3 || ! p4 || precision <= 0 ) {
+			return null;
+		}
 
-      for (let i = 0; i < features.length; i++) {
-        var _features$i$id;
+		var points = [];
 
-        let id = (_features$i$id = features[i].id) !== null && _features$i$id !== void 0 ? _features$i$id : features[i].properties.id;
-        let marker = markers[id];
+		for ( var t = 0; t <= 1; t += 1 / precision ) {
+			var mt = 1 - t;
+			var x = Math.pow( mt, 3 ) * p1[ 0 ] +
+				3 * Math.pow( mt, 2 ) * t * p2[ 0 ] +
+				3 * mt * Math.pow( t, 2 ) * p3[ 0 ] +
+				Math.pow( t, 3 ) * p4[ 0 ];
+			var y = Math.pow( mt, 3 ) * p1[ 1 ] +
+				3 * Math.pow( mt, 2 ) * t * p2[ 1 ] +
+				3 * mt * Math.pow( t, 2 ) * p3[ 1 ] +
+				Math.pow( t, 3 ) * p4[ 1 ];
 
-        if (!marker) {
-          let coords = features[i].geometry.coordinates;
-          let el = createThumbnail(features[i]);
-          marker = markers[id] = new mapboxgl.Marker({
-            element: el
-          }).setLngLat(coords);
-          cluster = true;
-        }
+			points.push( [ x, y ] );
+		}
 
-        newMarkers[id] = marker; //if (!cluster && features[i].properties.thumbnail && !nonClustermarkersOnScreen[features[i].properties.id]) {
+		return points;
+	}
 
-        if (!cluster && features[i].properties.thumbnail && !nonClustermarkersOnScreen[features[i].id]) {
-          let coords = features[i]['geometry'].coordinates;
-          let el = createThumbnail(features[i]);
-          marker = markers[id] = new mapboxgl.Marker({
-            element: el
-          }).setLngLat(coords);
-          marker.addTo(map);
-          nonClustermarkersOnScreen[features[i].id] = marker; //nonClustermarkersOnScreen[features[i].properties.id] = marker;
-        }
+	/**
+	 * Derive a bezier control point from three consecutive points.
+	 *
+	 * @param {Array}   explodedGLine2 Three point features, ordered [ p3, p2, p1 ].
+	 * @param {boolean} back           Project backwards from the middle point.
+	 * @param {number}  factor         Control arm shortening factor.
+	 * @return {Array|null} Position, or null when the input is incomplete.
+	 */
+	function ctrlPtBezier( explodedGLine2, back, factor ) {
+		back = back !== false;
+		factor = factor || 2.4;
 
-        if (!markersOnScreen[id]) marker.addTo(map);
-      } // for every marker we've added previously, remove those that are no longer visible
+		if ( ! Array.isArray( explodedGLine2 ) ) {
+			return null;
+		}
 
+		var p1 = explodedGLine2[ 2 ];
+		var p2 = explodedGLine2[ 1 ];
+		var p3 = explodedGLine2[ 0 ];
 
-      for (id in markersOnScreen) {
-        if (!newMarkers[id]) markersOnScreen[id].remove();
-        if (!newMarkers[id]) markersOnScreen[id] = null;
-      }
+		// A line with fewer than three vertices leaves holes here, and turf
+		// throws on undefined input.
+		if ( ! p1 || ! p2 || ! p3 ) {
+			return null;
+		}
 
-      markersOnScreen = newMarkers;
-    } // map handlers
-    // after the GeoJSON data is loaded, update markers on the screen and do so on every map move/moveend
+		if ( turf.booleanEqual( p2, p1 ) || turf.booleanEqual( p2, p3 ) ) {
+			return p2.geometry.coordinates;
+		}
 
+		var bearingS = turf.bearing( p1.geometry.coordinates, p2.geometry.coordinates );
+		var bearingT = turf.bearing( p2.geometry.coordinates, p3.geometry.coordinates );
+		var dBearing = bearingT - bearingS;
 
-    map.on('data', function (e) {
-      if (e.sourceId !== 'stories') return;
-      map.on('move', updateMarkers);
-      map.on('moveend', fetchPostsInView);
-      map.on('load', updateMarkers); // updateMarkers();
-    }); // Cluster categories
-    // Finally, add a layer for the clusters' count labels
+		dBearing = dBearing > 180 ? dBearing - 360 : dBearing;
+		dBearing = dBearing < -180 ? dBearing + 360 : dBearing;
 
-    map.addLayer({
-      "id": "cluster-count",
-      "type": "symbol",
-      "source": "stories"
-    }); // Generate a bezier curve
+		var lenS = turf.distance( p2, p1, { units: 'degrees' } );
+		var lenT = turf.distance( p2, p3, { units: 'degrees' } );
+		var bearingM = bearingS + dBearing * lenS / ( lenS + lenT );
 
-	  // Get a bounding box based on the diagonal from NE to SW
-    function bboxBuffer(factor) {
-      let bounds = map.getBounds();
-      let sw = [bounds._sw.lng, bounds._sw.lat];
-      let ne = [bounds._ne.lng, bounds._ne.lat];
-      let diagDist = turf.distance(sw, ne, {
-        units: 'degrees'
-      });
-      bboxB = turf.buffer(turf.bboxPolygon(sw.concat(ne)), diagDist * factor, {
-        units: 'degrees',
-        steps: 4
-      });
-	    //console.log(bboxB,'bboxB');
-      return bboxB;
-    } // Sends ajax request to get all the posts inside the boundin box
+		var distance = back ? -lenS / factor : lenT / factor;
 
+		return turf.destination( p2.geometry.coordinates, distance, bearingM, { units: 'degrees' } )
+			.geometry.coordinates;
+	}
 
-    function fetchPostsInView() {
-      if (shouldLoadThumbnails && (!boxToLoad || !turf.booleanWithin(bboxBuffer(0), boxToLoad))) {
-        shouldLoadThumbnails = false;
-        let bounds = map.getBounds();
-        let sw = [bounds._sw.lng, bounds._sw.lat];
-        let ne = [bounds._ne.lng, bounds._ne.lat];
-        boxToLoad = bboxBuffer(0.1);
-	  //console.log(boxToLoad,'boxToLoad');
-        $.ajax({
-          url: bvVarMap.plugin_dir + '/includes/ajax_geo.php',
-          type: "POST",
-          'dataType': 'json',
-          data: {
-            box_to_load: boxToLoad,
-            mapboxjs_bounding_box: {
-              ne: ne,
-              sw: sw
-            },
-            query: bvVarMap.queried_obj,
-		member: bvVarMap.private_member
-          },
-          success: function (data) {
-            shouldLoadThumbnails = true;
-            //console.log(data,'too much Data');
-            bvVarMapGeoJson.features = data; // Update the stories source with the new data
+	/**
+	 * Build a smoothed path through a journey's features.
+	 *
+	 * @param {number|string} journey   Journey identifier.
+	 * @param {Array}         jfeatures Features belonging to that journey.
+	 * @param {boolean}       gline2    Use stored geom_line2__ geometry as control hints.
+	 * @return {Object|null} A LineString feature, or null when there is nothing to draw.
+	 */
+	function buildJourneyBezier( journey, jfeatures, gline2 ) {
+		gline2 = gline2 !== false;
 
-            map.getSource('stories').setData(bvVarMapGeoJson);
-            setTimeout(updateMarkers, 100);
-          },
-          error: function (jqXHR, textStatus, errorThrown) {
-            shouldLoadThumbnails = true;
-          }
-        });
-      }
-    }
+		if ( ! Array.isArray( jfeatures ) || jfeatures.length < 2 ) {
+			return null;
+		}
 
-    fetchPostsInView();
-  });
-}
+		var ptsBezier = [];
+
+		for ( var i = 1; i < jfeatures.length; i++ ) {
+			var previous = jfeatures[ i - 1 ];
+			var current = jfeatures[ i ];
+			var startCtrl;
+			var endCtrl;
+
+			if ( gline2 ) {
+				var prevLine = previous.properties[ 'geom_line2__' + journey ];
+				var currLine = current.properties[ 'geom_line2__' + journey ];
+
+				startCtrl = prevLine
+					? turf.explode( prevLine ).features
+					: [ current, previous, jfeatures[ Math.max( i - 2, 0 ) ] ];
+
+				endCtrl = currLine
+					? turf.explode( currLine ).features
+					: [ jfeatures[ Math.min( i + 1, jfeatures.length - 1 ) ], current, previous ];
+			} else {
+				startCtrl = [ current, previous, jfeatures[ Math.max( i - 2, 0 ) ] ];
+
+				var lookahead;
+				if ( i + 1 < jfeatures.length ) {
+					lookahead = jfeatures[ i + 1 ];
+				} else if ( current.properties[ 'geom_line2__' + journey ] ) {
+					lookahead = turf.explode( current.properties[ 'geom_line2__' + journey ] ).features[ 0 ];
+				} else {
+					lookahead = jfeatures[ jfeatures.length - 1 ];
+				}
+
+				endCtrl = [ lookahead, current, previous ];
+			}
+
+			var segment = createBezierCurve(
+				previous.geometry.coordinates,
+				ctrlPtBezier( startCtrl, false ),
+				ctrlPtBezier( endCtrl, true ),
+				current.geometry.coordinates,
+				gline2 ? 20 : 10
+			);
+
+			// createBezierCurve returns null on incomplete control points;
+			// spreading that threw.
+			if ( segment ) {
+				ptsBezier.push.apply( ptsBezier, segment );
+			}
+		}
+
+		// turf.lineString() requires at least two positions.
+		if ( ptsBezier.length < 2 ) {
+			return null;
+		}
+
+		var journeyPath = turf.lineString( ptsBezier );
+		journeyPath.properties.journey = journey;
+
+		return journeyPath;
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Colour
+	 * ------------------------------------------------------------------ */
+
+	function clampChannel( value ) {
+		return Math.max( 0, Math.min( 255, Math.round( value ) ) );
+	}
+
+	function RGBToHex( r, g, b ) {
+		return '#' + [ r, g, b ].map( function ( channel ) {
+			var hex = clampChannel( channel ).toString( 16 );
+
+			return hex.length === 1 ? '0' + hex : hex;
+		} ).join( '' );
+	}
+
+	function randomRGB( i, startAt ) {
+		startAt = startAt === undefined ? 11 : startAt;
+
+		var defaultColors = [
+			[ 31, 119, 180 ], [ 255, 127, 14 ], [ 44, 160, 44 ], [ 214, 39, 40 ],
+			[ 148, 103, 189 ], [ 140, 86, 75 ], [ 227, 119, 194 ], [ 127, 127, 127 ],
+			[ 188, 189, 34 ], [ 23, 190, 207 ]
+		].reverse();
+
+		// A non-numeric journey id produced NaN here, indexing past the array and
+		// spreading undefined into RGBToHex.
+		var index = Number( i );
+		if ( ! isFinite( index ) ) {
+			index = 0;
+		}
+
+		var selectColor = defaultColors[ Math.abs( index ) % defaultColors.length ];
+
+		if ( index < startAt ) {
+			return selectColor;
+		}
+
+		var pertR = Math.floor( Math.random() * -21 );
+		var pertB = Math.floor( Math.random() * 20 );
+		var pertG = pertB + pertR;
+
+		return [
+			selectColor[ 0 ] + pertR,
+			selectColor[ 1 ] + pertG,
+			selectColor[ 2 ] + pertB
+		];
+	}
+
+	function colorFor( feature, index ) {
+		return RGBToHex.apply( null, randomRGB( Number( feature.properties.journey ) + 7 * index ) );
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Markers
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * Scroll a story into view, loading it first when it is not on the page.
+	 *
+	 * @param {number|string} featureId Post id.
+	 */
+	function scrollToStory( featureId ) {
+		var $post = $( '#post_' + featureId );
+
+		if ( $post.length ) {
+			$post[ 0 ].scrollIntoView( { behavior: 'smooth', block: 'center' } );
+			$post.parent().removeClass( 'hide' );
+
+			return;
+		}
+
+		// pv is published by the theme (digital-nomad-child). Without it there is
+		// nowhere to fetch the missing story from, so do nothing rather than
+		// throw on an undefined global.
+		if ( ! window.pv || ! window.pv.template_path ) {
+			return;
+		}
+
+		$.ajax( {
+			url: window.pv.template_path + '/inc/ajax.php',
+			type: 'POST',
+			data: {
+				data: featureId,
+				action: 'jumpto_post',
+				journey_id: $( '#journey_id' ).val() || ''
+			},
+			success: function ( response ) {
+				var data = typeof response === 'string' ? JSON.parse( response ) : response;
+
+				// Reset the theme's infinite-scroll flags.
+				window.load_more_top = true;
+				window.load_more_bottom = true;
+
+				$( '#content .story-list' ).replaceWith( '<div class="story-list">' + data.html + '</div>' );
+				window.initCoords = data.coords;
+
+				var $loaded = $( '#post_' + featureId );
+				if ( $loaded.length ) {
+					$loaded[ 0 ].scrollIntoView( { behavior: 'smooth', block: 'center' } );
+					$loaded.parent().removeClass( 'hide' );
+				}
+			}
+		} );
+	}
+
+	/**
+	 * Thumbnail URL for a feature id.
+	 *
+	 * @param {number|string} id Attachment id.
+	 * @return {string|null} URL, or null when unknown.
+	 */
+	function getImageById( id ) {
+		if ( ! id || ! bvVarMapGeoJson.features.length ) {
+			return null;
+		}
+
+		var feature = bvVarMapGeoJson.features.find( function ( candidate ) {
+			return candidate.properties.id === id || candidate.properties.id == id; // eslint-disable-line eqeqeq
+		} );
+
+		return feature ? feature.properties.thumbnail : null;
+	}
+
+	/**
+	 * Build the HTML marker for a story or cluster.
+	 *
+	 * @param {Object} feature GeoJSON feature.
+	 * @return {HTMLElement}
+	 */
+	function createThumbnail( feature ) {
+		var src = getImageById( feature.properties.id );
+		var extraClasses = '';
+
+		// getImageById returns null for an unknown id; .includes() threw on it.
+		if ( src && src.indexOf( '225x300' ) !== -1 ) {
+			extraClasses = ' vertical';
+		}
+
+		var html = '<div class="cluster-img-wrapper">';
+		if ( src ) {
+			html += '<img src="' + src + '" style="position:relative;width:100%;height:100%" ' +
+				'class="img-on-map' + extraClasses + '">';
+		}
+		html += '</div>';
+
+		if ( feature.properties.point_count ) {
+			html += '<span class="point_count">' + feature.properties.point_count + '</span>';
+		}
+
+		var el = document.createElement( 'div' );
+		el.innerHTML = html;
+		el.className = 'marker';
+
+		el.onclick = function () {
+			scrollToStory( feature.id );
+		};
+
+		return el;
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Style load
+	 * ------------------------------------------------------------------ */
+
+	map.on( 'style.load', function () {
+		var markers = {};
+		var markersOnScreen = {};
+		var nonClusterMarkersOnScreen = {};
+
+		var scale = new mapboxgl.ScaleControl( { maxWidth: 120, unit: 'imperial' } );
+		map.addControl( scale );
+		scale.setUnit( 'metric' );
+
+		map.addSource( 'stories', {
+			type: 'geojson',
+			data: bvVarMapGeoJson,
+			cluster: true,
+			clusterMaxZoom: 10,
+			clusterRadius: 50,
+			clusterProperties: {
+				id: [ 'max', [ 'get', 'id' ], '' ]
+			}
+		} );
+
+		map.addSource( 'trace', { type: 'geojson', data: routeData } );
+
+		map.addLayer( {
+			id: 'trace',
+			type: 'line',
+			source: 'trace',
+			paint: {
+				'line-color': [ 'get', 'color' ],
+				'line-opacity': 0.8,
+				'line-width': 7,
+				'line-blur': 1
+			},
+			layout: {
+				'line-join': 'round',
+				'line-cap': 'round'
+			}
+		} );
+
+		/* -----------------------------------------------------------------
+		 * Waypoints / itineraries
+		 *
+		 * Dead in production: bv_get_geom_futureevents() returns an empty array,
+		 * so bvVarMap.waypoints is null and none of this runs. Carried over
+		 * unchanged by decision, with only the fixes needed for strict mode.
+		 * -------------------------------------------------------------- */
+
+		if ( cfg.waypoints ) {
+			var waypointsData = {
+				type: 'FeatureCollection',
+				features: cfg.waypoints.filter( function ( x ) {
+					return x.properties.posttype === 'tribe_events';
+				} )
+			};
+
+			var itineraries = waypointsData.features
+				.map( function ( x ) {
+					return x.properties.journeys[ 0 ] !== undefined ? x.properties.journeys[ 0 ] : null;
+				} )
+				.filter( function ( el, index, self ) {
+					return el !== null && self.indexOf( el ) === index;
+				} )
+				.reverse();
+
+			var itinData = {
+				type: 'FeatureCollection',
+				features: []
+			};
+
+			var extendWaypoints = function ( journey, jFeatures ) {
+				var waypoints = jFeatures.filter( function ( y ) {
+					return y.properties.journeys[ 0 ] === journey;
+				} );
+
+				if ( ! waypoints.length ) {
+					return null;
+				}
+
+				var wBefore;
+				var wAfter;
+				var pBefore = waypoints[ 0 ].properties.journeys.concat();
+				var pAfter = waypoints[ 0 ].properties.journeys.concat();
+
+				do {
+					pBefore.shift();
+					wBefore = jFeatures.filter( function ( y ) {
+						var end = y.properties.datetime_end !== undefined
+							? y.properties.datetime_end
+							: y.properties.datetime;
+
+						return y.properties.journeys[ 0 ] === pBefore[ 0 ] &&
+							end < waypoints[ waypoints.length - 1 ].properties.datetime_start;
+					} )[ 0 ];
+				} while ( wBefore === undefined && pBefore.length );
+
+				do {
+					pAfter.shift();
+					wAfter = jFeatures.filter( function ( y ) {
+						return y.properties.journeys[ 0 ] === pAfter[ 0 ] &&
+							y.properties.datetime_start > waypoints[ 0 ].properties.datetime_end;
+					} ).pop();
+				} while ( wAfter === undefined && pAfter.length );
+
+				if ( wBefore ) {
+					waypoints.push( wBefore );
+				}
+
+				if ( wAfter ) {
+					waypoints.unshift( wAfter );
+				}
+
+				return waypoints;
+			};
+
+			itinData.features = itineraries
+				.map( function ( x ) {
+					return buildJourneyBezier( x, extendWaypoints( x, cfg.waypoints ), false );
+				} )
+				.filter( function ( el ) {
+					return el !== null && el !== undefined;
+				} );
+
+			itinData.features.forEach( function ( feature, i ) {
+				feature.properties.color = colorFor( feature, i );
+			} );
+
+			map.addSource( 'itinerary', { type: 'geojson', data: itinData } );
+
+			map.addLayer( {
+				id: 'itinerary',
+				type: 'line',
+				source: 'itinerary',
+				paint: {
+					'line-color': [ 'get', 'color' ],
+					'line-opacity': 0.9,
+					'line-width': 3,
+					'line-dasharray': [ 2, 1.5 ],
+					'line-blur': 0
+				},
+				layout: {
+					'line-join': 'miter',
+					'line-cap': 'butt'
+				}
+			} );
+
+			map.addSource( 'waypooints', { type: 'geojson', data: waypointsData } );
+
+			map.addLayer( {
+				id: 'waypoint-circles',
+				type: 'circle',
+				source: 'waypooints',
+				paint: {
+					'circle-radius': 6,
+					'circle-color': '#bbb'
+				},
+				filter: [ '==', '$type', 'Point' ]
+			} );
+
+			map.addLayer( {
+				id: 'poi-labels',
+				type: 'symbol',
+				source: 'waypooints',
+				layout: {
+					'icon-image': 'harbor_icon',
+					'text-field': [
+						'format',
+						[ 'get', 'date' ], { 'font-scale': 1, 'text-color': '#fff' },
+						'\n', {},
+						[ 'get', 'title' ], {
+							'text-font': [ 'literal', [ 'DIN Offc Pro Italic' ] ],
+							'font-scale': 0.8,
+							'text-color': '#fff'
+						},
+						'\n', {},
+						[ 'get', 'datetime_delta' ], {
+							'text-font': [ 'literal', [ 'DIN Offc Pro Italic' ] ],
+							'font-scale': 0.8,
+							'text-color': '#fff'
+						}
+					]
+				},
+				paint: {
+					'text-color': '#fff',
+					'text-halo-color': '#333',
+					'text-halo-width': 1.2,
+					'text-halo-blur': 0
+				}
+			} );
+
+			waypointsData.features.forEach( function ( waypoint ) {
+				var el = document.createElement( 'div' );
+				el.className = 'marker';
+
+				$( el ).on( 'click', function () {
+					scrollToStory( waypoint.id );
+				} );
+
+				new mapboxgl.Marker( el )
+					.setLngLat( waypoint.geometry.coordinates )
+					.addTo( map );
+			} );
+		}
+
+		/* -----------------------------------------------------------------
+		 * Marker sync
+		 * -------------------------------------------------------------- */
+
+		function updateMarkers() {
+			var newMarkers = {};
+			var features = map.querySourceFeatures( 'stories' );
+
+			if ( bvVarMapGeoJson.features.length > 0 ) {
+				var journeys = collectJourneys( bvVarMapGeoJson.features );
+
+				routeData.features = journeys
+					.map( function ( journey ) {
+						var members = bvVarMapGeoJson.features.filter( function ( feature ) {
+							return feature.properties.journeys &&
+								feature.properties.journeys.indexOf( journey ) !== -1;
+						} );
+
+						return buildJourneyBezier( journey, members, true );
+					} )
+					.filter( function ( el ) {
+						return el !== null && el !== undefined;
+					} );
+
+				routeData.features.forEach( function ( feature, i ) {
+					feature.properties.color = colorFor( feature, i );
+				} );
+
+				map.getSource( 'trace' ).setData( routeData );
+			}
+
+			if ( ! features ) {
+				return;
+			}
+
+			for ( var i = 0; i < features.length; i++ ) {
+				var feature = features[ i ];
+				var id = feature.id !== undefined && feature.id !== null
+					? feature.id
+					: feature.properties.id;
+				var marker = markers[ id ];
+
+				if ( ! marker ) {
+					marker = markers[ id ] = new mapboxgl.Marker( {
+						element: createThumbnail( feature )
+					} ).setLngLat( feature.geometry.coordinates );
+				}
+
+				newMarkers[ id ] = marker;
+
+				// The original set a `cluster` flag from "any marker currently on
+				// screen", which made this branch unreachable after the first
+				// pass. It now tracks un-clustered features as intended.
+				if ( ! feature.properties.point_count &&
+					feature.properties.thumbnail &&
+					! nonClusterMarkersOnScreen[ id ] ) {
+					marker.addTo( map );
+					nonClusterMarkersOnScreen[ id ] = marker;
+				}
+
+				if ( ! markersOnScreen[ id ] ) {
+					marker.addTo( map );
+				}
+			}
+
+			Object.keys( markersOnScreen ).forEach( function ( id ) {
+				if ( ! newMarkers[ id ] && markersOnScreen[ id ] ) {
+					markersOnScreen[ id ].remove();
+					delete nonClusterMarkersOnScreen[ id ];
+				}
+			} );
+
+			markersOnScreen = newMarkers;
+		}
+
+		/* -----------------------------------------------------------------
+		 * Loading
+		 * -------------------------------------------------------------- */
+
+		/**
+		 * Bounding box around the current view, buffered by a share of its diagonal.
+		 *
+		 * @param {number} factor Buffer multiplier.
+		 * @return {Object} A GeoJSON polygon.
+		 */
+		function bboxBuffer( factor ) {
+			var bounds = map.getBounds();
+			var sw = [ bounds.getWest(), bounds.getSouth() ];
+			var ne = [ bounds.getEast(), bounds.getNorth() ];
+			var diagDist = turf.distance( sw, ne, { units: 'degrees' } );
+
+			return turf.buffer( turf.bboxPolygon( sw.concat( ne ) ), diagDist * factor, {
+				units: 'degrees',
+				steps: 4
+			} );
+		}
+
+		function fetchPostsInView() {
+			if ( ! shouldLoadThumbnails ) {
+				return;
+			}
+
+			if ( boxToLoad && turf.booleanWithin( bboxBuffer( 0 ), boxToLoad ) ) {
+				return;
+			}
+
+			shouldLoadThumbnails = false;
+			boxToLoad = bboxBuffer( 0.1 );
+
+			var queried = cfg.queried_obj || {};
+
+			$.ajax( {
+				url: cfg.rest_url,
+				type: 'POST',
+				dataType: 'json',
+				contentType: 'application/json; charset=utf-8',
+				beforeSend: function ( xhr ) {
+					if ( cfg.rest_nonce ) {
+						xhr.setRequestHeader( 'X-WP-Nonce', cfg.rest_nonce );
+					}
+				},
+				// The old endpoint also took a `member` flag from the client and
+				// used it to decide whether to lift the private-post filter.
+				// Membership is now resolved server-side only.
+				data: JSON.stringify( {
+					box_to_load: boxToLoad,
+					term_id: queried.term_id || 0,
+					taxonomy: queried.taxonomy || '',
+					slug: queried.slug || ''
+				} ),
+				success: function ( data ) {
+					shouldLoadThumbnails = true;
+					bvVarMapGeoJson.features = Array.isArray( data ) ? data : [];
+					window.bvVarMapGeoJson = bvVarMapGeoJson;
+
+					map.getSource( 'stories' ).setData( bvVarMapGeoJson );
+					window.setTimeout( updateMarkers, 100 );
+				},
+				error: function () {
+					shouldLoadThumbnails = true;
+				}
+			} );
+		}
+
+		/* -----------------------------------------------------------------
+		 * Handlers
+		 *
+		 * `data` fires on every tile and every setData(). The original bound
+		 * move/moveend from inside that handler, so listeners accumulated for the
+		 * lifetime of the page and a single pan ran updateMarkers — and fired a
+		 * request — once per accumulated listener. Bind exactly once.
+		 * -------------------------------------------------------------- */
+
+		var handlersBound = false;
+
+		map.on( 'data', function ( e ) {
+			if ( e.sourceId !== 'stories' || handlersBound ) {
+				return;
+			}
+
+			handlersBound = true;
+			map.on( 'move', updateMarkers );
+			map.on( 'moveend', fetchPostsInView );
+			updateMarkers();
+		} );
+
+		fetchPostsInView();
+	} );
+}( jQuery ) );

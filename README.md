@@ -74,31 +74,72 @@ Each mapped post is expected to carry:
 | `small_map_image_size`| Marker size in rem                                      |
 
 Categories act as journeys; `$GLOBALS['special_categories']` marks categories
-that are excluded from journey grouping and must be set by the theme.
+excluded from journey grouping. It is published by the `bv_geotagged_media`
+plugin, and read here through `bv_map_special_categories()`, which falls back to
+an empty array when that plugin is inactive.
+
+## HTTP API
+
+`POST /wp-json/bv-map/v1/points`
+
+Returns the GeoJSON features intersecting a viewport. Send `X-WP-Nonce` — a
+logged-in member is only recognised as one when the nonce authenticates the
+request, and members see posts in the restricted category tree that anonymous
+callers do not.
+
+```json
+{ "box_to_load": { "type": "Feature", "geometry": { … } },
+  "term_id": 42, "taxonomy": "category", "slug": "some-journey" }
+```
+
+Membership is resolved server-side from the capability `read_private_posts`;
+there is deliberately no request parameter for it.
 
 ## Layout
 
 ```
-index.php                  Plugin bootstrap: shortcodes, widget, block, asset enqueue
-map.php                    Marker sizing partial
-list-stories-view.php      Story list template ([bv_list_shortcode])
-includes/spatialquery.php  Spatial WP_Query helpers (bv_query_rectangle, bv_bufferbox)
-includes/ajax.php          Bounding-box endpoint returning points in view
-includes/ajax_geo.php      Bounding-box endpoint, category/journey aware
-assets/js/main.js          Map setup, incremental loading, line drawing
-assets/js/block.js         Gutenberg block registration
-assets/css/style.css       Frontend map styles
-docs/NOTES.md              Development notes on the incremental loading strategy
+index.php                   Bootstrap: constants, requires, dependency notices
+includes/compat.php         Guarded wrappers for theme/ACF/GeoMeta symbols
+includes/geo-query.php      Spatial WP_Query helpers (bv_query_rectangle, bv_bufferbox)
+includes/geo-data.php       Posts -> GeoJSON features (bv_get_geompoint, …)
+includes/rest.php           bv-map/v1/points endpoint
+includes/assets.php         Script/style registration and the bvVarMap payload
+includes/shortcodes.php     [bv_map_shortcode], [bv_list_shortcode]
+includes/widget.php         beauVoyage Map widget
+includes/block.php          Block editor assets
+templates/list-stories.php  Story list markup
+assets/js/main.js           Map setup, incremental loading, line drawing
+assets/js/block.js          Block registration
+assets/css/style.css        Frontend map styles
+assets/vendor/              Self-hosted Mapbox GL + Turf (see its README)
+docs/NOTES.md               Notes on the incremental loading strategy
 ```
+
+## Conventions
+
+- `index.php` must keep its filename. WordPress identifies a plugin by
+  `<folder>/<file>.php`, so renaming it deactivates the installed plugin.
+- Every `bv_*` function name is public API. `digital-nomad-child` calls
+  `bv_get_geompoint()`, `9to5voyage` calls `bv_get_attachment_map_data()` and
+  reads `BV_MAP_PLUGIN_URL`.
+- `assets/js/main.js` intentionally exports two globals, `map` and
+  `bvVarMapGeoJson`. The theme's `list-stories.js` calls `map.fitBounds()` /
+  `map.flyTo()` and searches `bvVarMapGeoJson.features`.
+- There is no build step; `main.js` is hand-maintained ES6 and ships as-is.
 
 ## Known rough edges
 
-- `includes/ajax.php` and `includes/ajax_geo.php` bootstrap WordPress by
-  path-munging `__DIR__` to locate `wp-load.php` rather than going through
-  `admin-ajax.php` or the REST API, and they consume `$_POST` without
-  sanitisation or a nonce check. Worth migrating to a registered REST route.
-- `assets/js/temp.js` and `assets/js/elementor-class.js` are scratch files and
-  are not enqueued.
+- The waypoints/itinerary feature is inert: `bv_get_geom_futureevents()` has had
+  its body commented out for a long time, so it returns an empty array and the
+  `itinerary`, `waypoint-circles` and `poi-labels` layers never receive data.
+  Reviving it means restoring the `tribe_events()` query and checking it against
+  the installed The Events Calendar.
+- The block's `save()` emits a bare `#map` container but nothing enqueues the map
+  script for it, so a page containing only the block renders an empty div. The
+  shortcode and widget are the working entry points.
+- `isImage()` / `isVideo()` are defined in `includes/compat.php` because the
+  copies in `bv_geotagged_media` live in a `.php_gentrit` file WordPress never
+  loads.
 
 ## License
 
