@@ -49,8 +49,6 @@ jQuery( function ( $ ) {
 		return;
 	}
 
-	var MAP_WIDTH_WIDESCREEN = 0.45;
-	var MAP_HEIGHT_NONWIDESCREEN = 0.4;
 	var RESIZE_THROTTLE_MS = 100;
 
 	var bvVarMapGeoJson = {
@@ -78,24 +76,34 @@ jQuery( function ( $ ) {
 	 * Viewport
 	 * ------------------------------------------------------------------ */
 
+	/**
+	 * Toggle the layout class and let Mapbox re-measure itself.
+	 *
+	 * This used to write width/height attributes straight onto
+	 * .mapboxgl-canvas. That is Mapbox's drawing buffer, and Mapbox sizes it at
+	 * cssSize × devicePixelRatio. Writing raw CSS pixels onto it halves the
+	 * buffer on any Retina display while the GL viewport stays configured for
+	 * the full size, so the basemap renders at a different scale and offset
+	 * from the HTML markers — the markers appear not to track the map as it
+	 * moves. Invisible at devicePixelRatio 1, which is why it hid for so long.
+	 *
+	 * Mapbox GL 2.4.0 re-asserted the canvas size on the next render and so
+	 * silently repaired this; later versions do not, which is what made the map
+	 * look broken on every version after 2.4.0.
+	 *
+	 * The canvas does not need sizing by hand in any case: #map is sized by CSS
+	 * and Mapbox derives the buffer from the container. map.resize() is the
+	 * supported way to tell it the container changed.
+	 */
 	function checkWindowDimensions() {
-		var width = window.innerWidth;
-		var height = window.innerHeight;
-
-		if ( width > height ) {
+		if ( window.innerWidth > window.innerHeight ) {
 			$( 'body' ).addClass( 'wide' );
-
-			if ( map ) {
-				$( '.mapboxgl-canvas' ).attr( 'height', height );
-				$( '.mapboxgl-canvas' ).attr( 'width', width * MAP_WIDTH_WIDESCREEN );
-			}
 		} else {
 			$( 'body' ).removeClass( 'wide' );
+		}
 
-			if ( map ) {
-				$( '.mapboxgl-canvas' ).attr( 'height', height * MAP_HEIGHT_NONWIDESCREEN );
-				$( '.mapboxgl-canvas' ).attr( 'width', width );
-			}
+		if ( map ) {
+			map.resize();
 		}
 	}
 
@@ -763,6 +771,16 @@ jQuery( function ( $ ) {
 				return;
 			}
 
+			// querySourceFeatures() only reports features from tiles that are
+			// currently rendered. If the source holds data but no tiles are
+			// resident yet — mid-animation, or while tiles for a new zoom are
+			// still loading — an empty result is "ask again later", not "there
+			// is nothing here". Removing every marker on that basis is what made
+			// thumbnails vanish during a flyTo.
+			if ( ! features.length && bvVarMapGeoJson.features.length > 0 ) {
+				return;
+			}
+
 			for ( var i = 0; i < features.length; i++ ) {
 				var feature = features[ i ];
 				var id = feature.id !== undefined && feature.id !== null
@@ -879,6 +897,22 @@ jQuery( function ( $ ) {
 		 * move/moveend from inside that handler, so listeners accumulated for the
 		 * lifetime of the page and a single pan ran updateMarkers — and fired a
 		 * request — once per accumulated listener. Bind exactly once.
+		 *
+		 * updateMarkers() is bound to `idle`, not `move`. Markers do not need a
+		 * `move` handler to follow the camera — mapboxgl.Marker registers its
+		 * own on addTo() and repositions itself every frame. The only thing
+		 * updateMarkers() contributes during a camera animation is membership,
+		 * recomputed from querySourceFeatures(), which reads *rendered tiles*.
+		 * Mid-flight, fewer tiles are resident, so the set shrinks and markers
+		 * get removed — visible as thumbnails disappearing while the story
+		 * column is scrolled, and markedly worse on Mapbox GL after 2.4.0 where
+		 * tile lifecycle during animation changed.
+		 *
+		 * `idle` fires once the camera has stopped and every requested tile has
+		 * loaded, which is the only moment querySourceFeatures() gives a
+		 * complete answer. Recomputing the journey lines there too is a bonus:
+		 * they derive from bvVarMapGeoJson, which only changes on fetch, so
+		 * running the bezier maths every frame was wasted work.
 		 * -------------------------------------------------------------- */
 
 		var handlersBound = false;
@@ -889,7 +923,7 @@ jQuery( function ( $ ) {
 			}
 
 			handlersBound = true;
-			map.on( 'move', updateMarkers );
+			map.on( 'idle', updateMarkers );
 			map.on( 'moveend', fetchPostsInView );
 			updateMarkers();
 		} );

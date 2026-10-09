@@ -35,8 +35,8 @@ if ( ! defined( 'BV_MAP_PLUGIN_URL' ) ) {
 
 // Versions of the vendored libraries in assets/vendor/, for reference when
 // updating them. They are no longer used to build CDN URLs.
-define( 'BV_MAP_MAPBOX_VER', 'v2.4.0' );
-define( 'BV_MAP_TURF_VER', '6.5.0' );
+define( 'BV_MAP_MAPBOX_VER', 'v3.32.0' );
+define( 'BV_MAP_TURF_VER', '7.4.0' );
 
 require_once BV_MAP_PLUGIN_DIR . 'includes/compat.php';
 require_once BV_MAP_PLUGIN_DIR . 'includes/geo-query.php';
