@@ -431,17 +431,25 @@ jQuery( function ( $ ) {
 		// pv is published by the theme (digital-nomad-child). Without it there is
 		// nowhere to fetch the missing story from, so do nothing rather than
 		// throw on an undefined global.
-		if ( ! window.pv || ! window.pv.template_path ) {
+		//
+		// The theme moved this endpoint off its own inc/ajax.php -- a directly
+		// addressable file with no nonce and no capability check -- onto
+		// admin-ajax.php, and now requires a nonce. Both values ride on the
+		// same `pv` object the theme already localises, so nothing is needed
+		// from this plugin's PHP. Bail if the theme is too old to supply them
+		// rather than firing a request that will be rejected.
+		if ( ! window.pv || ! window.pv.ajax_url || ! window.pv.ajax_nonce ) {
 			return;
 		}
 
 		$.ajax( {
-			url: window.pv.template_path + '/inc/ajax.php',
+			url: window.pv.ajax_url,
 			type: 'POST',
 			data: {
 				data: featureId,
 				action: 'jumpto_post',
-				journey_id: $( '#journey_id' ).val() || ''
+				journey_id: $( '#journey_id' ).val() || '',
+				_ajax_nonce: window.pv.ajax_nonce
 			},
 			success: function ( response ) {
 				var data = typeof response === 'string' ? JSON.parse( response ) : response;
