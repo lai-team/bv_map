@@ -27,6 +27,22 @@ function bv_map_asset_version( $relative_path ) {
 
 /**
  * Register the map's scripts and styles.
+ *
+ * Deliberately NOT hooked to wp_enqueue_scripts. The active theme enqueues
+ *
+ *     wp_enqueue_script( 'bv-list-stories-script', …, array( 'jquery', 'bv-map-js' ) )
+ *
+ * in the head group. If 'bv-map-js' is already registered when that runs,
+ * WordPress resolves the dependency and prints the map script inside <head> —
+ * before the shortcode has run, so wp_localize_script() attaches bvVarMap to an
+ * already-printed handle and the data is dropped, and main.js executes before
+ * the #map container exists.
+ *
+ * Leaving the handle unregistered until the shortcode asks for it means the
+ * theme's dependency cannot resolve during wp_head, so WordPress defers that
+ * whole chain to the footer — which is where it has always been printed.
+ *
+ * @see bv_map_enqueue_assets()
  */
 function bv_map_register_assets() {
 	// Mapbox GL and Turf are served from this domain rather than a CDN: the site
@@ -70,18 +86,29 @@ function bv_map_register_assets() {
 		bv_map_asset_version( 'assets/css/style.css' )
 	);
 }
-add_action( 'wp_enqueue_scripts', 'bv_map_register_assets' );
 
 /**
  * Enqueue the map assets and hand the script its configuration.
  *
+ * Registration happens here rather than on wp_enqueue_scripts so that the
+ * handle does not exist while the head scripts are being printed. See
+ * bv_map_register_assets() for why that matters.
+ *
  * @param int|string $post_id Post the map is rendering for.
  */
 function bv_map_enqueue_assets( $post_id = 0 ) {
-	// Registration runs on wp_enqueue_scripts; a shortcode inside a widget or a
-	// REST-rendered block can run earlier, so make sure it has happened.
 	if ( ! wp_script_is( 'bv-map-js', 'registered' ) ) {
 		bv_map_register_assets();
+	}
+
+	// If something has already printed the handle, wp_localize_script() below
+	// would silently discard bvVarMap. Warn while debugging rather than leaving
+	// a blank map to diagnose from the browser.
+	if ( wp_script_is( 'bv-map-js', 'done' ) && defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+		trigger_error( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_trigger_error
+			'BV Map: bv-map-js was printed before the shortcode ran, so bvVarMap could not be attached.',
+			E_USER_WARNING
+		);
 	}
 
 	wp_enqueue_script( 'bv-map-js' );

@@ -13,9 +13,13 @@
  * scope them away without updating the theme.
  */
 
-( function ( $ ) {
+jQuery( function ( $ ) {
 	'use strict';
 
+	// Runs on DOM ready rather than immediately: the theme lists bv-map-js as a
+	// dependency of a head-group script, so this file can be printed in <head>
+	// before the #map container exists. Waiting costs nothing in the footer and
+	// makes head placement survivable.
 	var cfg = window.bvVarMap;
 
 	// Bail quietly rather than throwing when a dependency or the container is
@@ -863,4 +867,4 @@
 
 		fetchPostsInView();
 	} );
-}( jQuery ) );
+} );

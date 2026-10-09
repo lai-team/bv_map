@@ -126,6 +126,14 @@ docs/NOTES.md               Notes on the incremental loading strategy
   `bvVarMapGeoJson`. The theme's `list-stories.js` calls `map.fitBounds()` /
   `map.flyTo()` and searches `bvVarMapGeoJson.features`.
 - There is no build step; `main.js` is hand-maintained ES6 and ships as-is.
+- **Do not register `bv-map-js` on `wp_enqueue_scripts`.** The active theme
+  enqueues `bv-list-stories-script` with `bv-map-js` in its dependency array, in
+  the head group. If the handle exists while head scripts are printing,
+  WordPress prints the map script into `<head>` — before the shortcode runs — so
+  `wp_localize_script()` attaches `bvVarMap` to an already-printed handle and the
+  config is silently dropped. Registration happens lazily in
+  `bv_map_enqueue_assets()` precisely so that dependency cannot resolve too
+  early, which keeps the whole chain in the footer where it has always printed.
 
 ## Known rough edges
 
